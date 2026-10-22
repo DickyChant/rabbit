@@ -146,6 +146,8 @@ class Fitter:
             # the traced functions of the other de-biasing setting
             # (_set_mcstat_debias_suspended)
             "_mcstat_tf_standby",
+            # rabbit.batched_profile.BatchedProfile (Fitter.batched_profile)
+            "_batched_profile",
         }
     )
     valid_systematic_types = ["log_normal", "normal"]

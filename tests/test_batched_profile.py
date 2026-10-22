@@ -9,6 +9,7 @@ fitter as it found it, and that a fit it does not support falls back to the
 sequential scan.
 """
 
+import copy
 import os
 
 import hist
@@ -189,6 +190,40 @@ def test_undefined_points_are_given_up_at_once(tmp_path):
     assert not np.isfinite(res.dnll[0]) and not res.converged[0]
     assert res.iterations[0] == 1
     assert np.isfinite(res.dnll[1]) and res.converged[1]
+
+
+def test_frozen_parameters_stay_at_their_values(tmp_path):
+    """The linear warm start must not move a frozen parameter that the
+    covariance correlates with the scanned one."""
+    f = make_fitter(tmp_path)
+    f.freeze_params("bkg_norm")
+    ifz = int(np.where(f.parms.astype(str) == "bkg_norm")[0][0])
+    xbest = f.x.numpy().copy()
+    x_seq, dnll_seq, _ = f.nll_scan("sig_a", SCAN_RANGE, 7)
+    x_bat, dnll_bat, detail = f.nll_scan(
+        "sig_a", SCAN_RANGE, 7, save_detail=True, batch_size=8
+    )
+    np.testing.assert_allclose(dnll_bat, dnll_seq, rtol=0, atol=1e-6)
+    np.testing.assert_array_equal(detail["x"][:, ifz], xbest[ifz])
+
+
+def test_profile_without_a_usable_covariance(tmp_path):
+    """Without a postfit covariance the linear warm start is skipped."""
+    f = make_fitter(tmp_path)
+    ia = int(np.where(f.parms.astype(str) == "sig_a")[0][0])
+    x_seq, dnll_seq, _ = f.nll_scan("sig_a", SCAN_RANGE, 7)
+    f.cov.assign(np.zeros_like(f.cov.numpy()))
+    res = BatchedProfile(f).profile([ia], x_seq[:, None])
+    assert res.converged.all()
+    np.testing.assert_allclose(res.dnll, dnll_seq, rtol=0, atol=1e-6)
+
+
+def test_fitter_can_be_copied_after_a_batched_scan(tmp_path):
+    f = make_fitter(tmp_path)
+    _, dnll, _ = f.nll_scan("sig_a", SCAN_RANGE, 5, batch_size=4)
+    g = copy.deepcopy(f)
+    _, dnll_copy, _ = g.nll_scan("sig_a", SCAN_RANGE, 5, batch_size=4)
+    np.testing.assert_allclose(dnll_copy, dnll, rtol=0, atol=1e-9)
 
 
 def test_unsupported_fit_falls_back_to_sequential(tmp_path):

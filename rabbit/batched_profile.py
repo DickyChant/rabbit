@@ -421,17 +421,28 @@ class BatchedProfile:
         idx = [int(i) for i in indices]
         values = np.asarray(values, dtype=float).reshape(-1, len(idx))
         xbest = f.x.numpy()
+        frozen = np.asarray(f.frozen_params_mask.numpy(), dtype=bool)
         C = f.cov.numpy() if f.cov is not None else None
-        scale = np.sqrt(np.diag(C)[idx]) if C is not None else np.ones(len(idx))
+        scale = np.ones(len(idx))
+        shift = None
+        if C is not None:
+            var = np.diag(C)[idx]
+            scale = np.where(var > 0, np.sqrt(np.abs(var)), 1.0)
+            try:
+                shift = np.linalg.solve(C[np.ix_(idx, idx)], (values - xbest[idx]).T)
+            except np.linalg.LinAlgError:
+                pass  # no usable covariance, e.g. without the postfit Hessian
         if x_start is not None:
             X0 = np.array(x_start, dtype=float)
             X0[:, idx] = values
         else:
             X0 = np.tile(xbest, (len(values), 1))
             X0[:, idx] = values
-            if C is not None:
-                shift = np.linalg.solve(C[np.ix_(idx, idx)], (values - xbest[idx]).T)
+            if shift is not None and np.all(np.isfinite(shift)):
                 linear = X0 + (C[:, idx] @ shift).T
+                # frozen parameters stay where they are, whatever their covariance
+                # (the scanned ones are frozen too during Fitter.nll_scan)
+                linear[:, frozen] = xbest[frozen]
                 linear[:, idx] = values
                 v_linear = self._values(linear, batch_size)
                 use = np.isfinite(v_linear) & ~(
@@ -439,7 +450,7 @@ class BatchedProfile:
                 )
                 X0[use] = linear[use]
         free = np.ones_like(X0)
-        free[:, np.asarray(f.frozen_params_mask.numpy(), dtype=bool)] = 0.0
+        free[:, frozen] = 0.0
         free[:, idx] = 0.0
         order = np.argsort((((values - xbest[idx]) / scale) ** 2).sum(axis=1))
         nll_best = float(self._padded(self._val_fn, xbest[None, :], 1)[0])
